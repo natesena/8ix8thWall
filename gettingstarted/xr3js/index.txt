@@ -1,0 +1,266 @@
+// Copyright (c) 2018 8th Wall, Inc.
+
+var theScene = null
+var theRenderer = null
+var theCamera = null
+var thePlayer = null
+var theActor = null
+var theAsset = null
+var theViewport = null
+var applicationName = "8thWall-8i"
+var version = "0.1"
+var firstOne = false
+var secondOne = false
+var thirdOne = false
+
+function displayText(text){
+  infoEl = document.querySelector('#extraInfo')
+  containerEl = document.createElement('p')
+  wordText = document.createTextNode(text)
+  containerEl.appendChild(wordText)
+  infoEl.appendChild(containerEl)
+}
+
+//8i
+const wasmSupported = (() => {
+  try {
+      if (typeof WebAssembly === "object"
+          && typeof WebAssembly.instantiate === "function") {
+          const module = new WebAssembly.Module(Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00));
+          if (module instanceof WebAssembly.Module)
+              return new WebAssembly.Instance(module) instanceof WebAssembly.Instance;
+      }
+  } catch (e) {
+  }
+  return false;
+})();
+
+const onxrloaded = () => {
+  const purple = 0xAD50FF
+  const cherry = 0xDD0065
+  const mint = 0x00EDAF
+  const canary = 0xFCEE21
+
+  // To illustrate how to integrate render updates with the camera run loop, we drive a cone in
+  // a circle every three seconds.
+  let animateCone
+  var startTime = Date.now()
+  var previousTime = startTime
+  const coneLoopMillis = 3000
+
+
+  // Populates some object into an XR scene and sets the initial camera position. The scene and
+  // camera come from xr3js, and are only available in the camera loop lifecycle onStart() or later.
+  const initXrScene = ({scene, camera}) => {
+
+    //8i
+    ENVSummary = JSON.stringify(EightI.Env)
+    displayText("/n" + "eightiENV" + ENVSummary)
+
+    if(wasmSupported) {
+        EightI.Env.registerFileURL("libeighti.wasm", "https://player.cdn.8i.com/interface/1.2.0/wasm/libeighti.wasm");
+        EightI.Env.registerFileURL("libeighti.wast", "https://player.cdn.8i.com/interface/1.2.0/wasm/libeighti.wast");
+        EightI.Env.registerFileURL("libeighti.temp.asm.js", "https://player.cdn.8i.com/interface/1.2.0/wasm/libeighti.temp.asm.js");
+        let script = document.createElement('script');
+        script.src = "https://player.cdn.8i.com/interface/1.2.0/wasm/libeighti.js";
+        document.body.append(script);
+        console.log('Web Assembly is available')
+    } 
+    else { // useJSASM
+        EightI.Env.registerFileURL("libeighti.asm.js.mem", "https://player.cdn.8i.com/interface/1.2.0/asmjs/libeighti.asm.js.mem");
+        let script = document.createElement('script');
+        script.src = "https://player.cdn.8i.com/interface/1.2.0/asmjs/libeighti.asm.js";
+        document.body.append(script);
+        console.log('Using JavaScript Assembly');
+    }
+    // end 8i
+
+    // Add a grid of purple spheres to the scene. Objects in the scene at height/ y=0 will appear to
+    // stick to physical surfaces.
+    for (let i = -5; i <=5 ; i += .5) {
+      for (let j = -5; j <= 5; j += .5) {
+        if (Math.round(i) != i && Math.round(j) != j) { continue }
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(.03, 8, 8), new THREE.MeshBasicMaterial({color: purple}))
+        sphere.position.set(i, 0, j)
+        scene.add(sphere)
+      }
+    }
+
+    // Add one cone in each cardinal direction, and three ahead. Objects in the scene at height
+    // y=0 will appear to stick to physical surfaces.
+    const cones = [
+      {c: canary, p: [ 5, .5, 0]}, {c: mint, p: [-5, .5, 0]}, {c: cherry, p: [ 0, .5, 5]},
+      {c: cherry, p: [ 0, .5, -5]}, {c: canary, p: [-1, .5, -5]}, {c: mint, p: [ 1, .5, -5]}
+    ]
+    const shape = new THREE.ConeGeometry( 0.25, 1, 8 )
+    cones.forEach(({c, p}) => {
+      const cone = new THREE.Mesh(shape, new THREE.MeshBasicMaterial({color: c}))
+      cone.position.set(...p)
+      if (p[0] == 0 && p[2] == -5) { animateCone = cone } // save one cone for animation.
+      scene.add(cone)
+    })
+
+    // Set the initial camera position relative to the scene we just laid out. This must be at a
+    // height greater than y=0.++
+    camera.position.set(0, 3, 5)
+  }
+
+  XR.addCameraPipelineModules([  // Add camera pipeline modules.
+    // Existing pipeline modules.
+    XR.GlTextureRenderer.pipelineModule(),       // Draws the camera feed.
+    XR.Threejs.pipelineModule(),                 // Creates a ThreeJS AR Scene.
+    XR.XrController.pipelineModule(),            // Enables SLAM tracking.
+    XRExtras.AlmostThere.pipelineModule(),       // Detects unsupported browsers and gives hints.
+    XRExtras.RuntimeError.pipelineModule(),      // Shows an error image on runtime error.
+  ])
+
+  // Add custom logic to the camera loop. This is done with camera pipeline modules that provide
+  // logic for key lifecycle moments for processing each camera frame. In this case, we'll be
+  // adding onStart logic for scene initialization, and onUpdate logic for scene updates.
+  XR.addCameraPipelineModule({
+    // Camera pipeline modules need a name. It can be whatever you want but must be unique within
+    // your app.
+    name: '8thWall-8i',
+
+    // onStart is called once when the camera feed begins. In this case, we need to wait for the
+    // XR.Threejs scene to be ready before we can access it to add content. It was created in
+    // XR.Threejs.pipelineModule()'s onStart method.
+    onStart: ({canvasWidth, canvasHeight}) => {
+      // Get the 3js scene from xr3js.
+      const {scene, camera, renderer} = XR.Threejs.xrScene()
+      theScene = scene
+      theRenderer = renderer  
+      theCamera = camera
+
+      theRenderer.clear(true,true,true)
+      // Add some objects to the scene and set the starting camera position.
+      initXrScene({scene, camera})
+      
+      try{
+        EightI.Env.initialise(applicationName, version, onEightiInitialise);
+      }
+      catch(err){
+        displayText("/n" + "initXR Error: " + err + "/n")
+      }
+
+      // Sync the xr controller's 6DoF position and camera paremeters with our scene.
+      XR.XrController.updateCameraProjectionMatrix({
+        origin: camera.position,
+        facing: camera.quaternion,
+      })
+    },
+
+    // onUpdate is called once per camera loop prior to render. Any 3js geometry scene
+    // would typically happen here.
+    onUpdate: () => {
+      
+      // Update the position of the animating cone at a constant angular velocity.
+      const coneTheta = ((Date.now() - startTime) % coneLoopMillis) * 2 * Math.PI  / coneLoopMillis
+      animateCone.position.set(Math.sin(coneTheta) * 1.5, .5, -Math.cos(coneTheta) * 1.5 - 3.5)
+
+      
+    },
+    onRender: () =>{
+      //8i animate function takes argument t for time -----------------------------------------------------------------------------
+      var t = Date.now() - previousTime
+      theCamera.updateMatrixWorld();
+      theCamera.matrixWorldInverse.getInverse(theCamera.matrixWorld);
+      theRenderer.clear(true, true, true);
+        
+      if (thePlayer && theActor && theActor.asset){
+        if(!firstOne){
+          displayText("in onUpdate" + "/n")
+          firstOne = true
+        }
+        
+        // Allow EightI library to update.
+        EightI.Env.update();
+
+        // Update asset.
+        let assetState = theAsset.getState(); 
+        if(!secondOne){
+          displayText(assetState + "/n")
+          secondOne = true
+        }
+      
+        if(!assetState.isInitialising() && !assetState.isPlaying()) {
+            if(!thirdOne){
+              displayText(" Should be playing")
+              thirdOne = true
+            }
+            theAsset.play()
+        }
+      
+        theAsset.update(t/1000);
+
+        // Update viewport
+        theViewport.setDimensions(0, 0, 480 * window.devicePixelRatio, 640 * window.devicePixelRatio);
+        theViewport.setViewMatrix(theCamera.matrixWorldInverse);
+        theViewport.setProjMatrix(theCamera.projectionMatrix);
+
+        // Render EightI content
+        thePlayer.willRender(theActor, theViewport);
+        thePlayer.prepareRender();
+        thePlayer.render(theActor, theViewport);
+
+        theRenderer.state.reset();
+        theRenderer.render(theScene, theCamera);
+      }
+      //requestAnimationFrame( this._animate.bind(this) );
+      //End 8i--------------------------------------------------------------------------
+    }
+  })
+  
+
+  // Call xrController.pause() / xrController.resume() when the button is pressed.
+  const pauseButton = document.getElementById('pause')
+  pauseButton && pauseButton.addEventListener(
+    'click',
+    () => {
+      if (!XR.isPaused()) {
+        XR.pause()
+        pauseButton.innerHTML = "RESUME"
+        pauseButton.className = 'paused'
+      } else {
+        XR.resume()
+        pauseButton.innerHTML = "PAUSE",
+        pauseButton.className = ''
+      }
+    },
+    true)
+
+  const canvas = document.getElementById('camerafeed')
+  // Call XrController.recenter() when the canvas is tapped with two fingers. This resets the
+  // ar camera to the position specified by XrController.updateCameraProjectionMatrix() above.
+  canvas.addEventListener(
+    'touchstart', (e) => { e.touches.length == 2 && XR.XrController.recenter() }, true)
+
+  wasmEl = document.querySelector('#wasmBoolean')
+  wasmEl.textContent = wasmSupported
+  // Open the camera and start running the camera run loop.
+  XR.run({canvas})
+}
+
+function onEightiInitialise(){
+  displayText("within onEightiInitiailise /n")
+  displayText("rederer context: " + theRenderer.context + "/n")
+  thePlayer = new EightI.Player(theRenderer.context);
+  theViewport = new EightI.Viewport();
+  theActor = new EightI.Actor();
+  let renderMethod = new EightI.RenderMethod("PointSprite");
+  theAsset = new EightI.Asset("https://zigcon-cdn.staging.8i.com/bridget_050418.hvrs");
+  theAsset.create();
+  theAsset.setLooping(true);
+  theActor.setAsset(theAsset); //This line of code is giving me an error
+  theActor.setRenderMethod(renderMethod);
+  let transform = new THREE.Matrix4();
+  //used to be al .01
+  let scale = 0.01
+  transform.makeScale(scale, scale, scale);
+  theActor.setTransform(transform);
+   console.log("EIGHTI is INITIALISED");
+   console.log("EightI Env after init: ", JSON.stringify(EightI.Env));
+}
+
+window.onload = () => {window.XR ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)}
