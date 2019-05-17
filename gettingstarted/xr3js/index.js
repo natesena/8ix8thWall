@@ -21,14 +21,6 @@ var clock = null
 var textureLoader = null
 var floorImage = null
 
-//Audio Variables
-var audioContext = null
-var audioGainNode = null
-var lastTime = null
-var playing = false
-var muted = false
-var current = null
-
 //8i is dependent on Web Assembly to be fast!
 const wasmSupported = (() => {
   try {
@@ -45,71 +37,13 @@ const wasmSupported = (() => {
 })();
 
 const onxrloaded = () => {
-  const purple = 0xAD50FF
 
   // Populates some object into an XR scene and sets the initial camera position. The scene and
   // camera come from xr3js, and are only available in the camera loop lifecycle onStart() or later.
   const initXrScene = ({scene, camera}) => {
     viewportWidth = window.innerWidth
     viewportHeight = window.innerHeight
-
-    //Beginning audio 
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    // console.log("audioContext.state", audioContext.state)
-    // console.log("audioContext Destination", audioContext.destination)
-    if (audioContext.state == "suspended") {
-      muted = true
-    }
-    audioGainNode = audioContext.createGain();
-    if(muted) {
-        audioGainNode.gain.value = 0;
-    } else {
-        audioGainNode.gain.value = 1;
-    }
-    audioGainNode.connect(audioContext.destination);
-
-    // pause() {
-    //     if(this._playing) {
-    //         this._playing = false;
-    //         this._reset(0.0);
-    //     }
-    // }
-
-    // seek(time) {
-    //     this._reset(time);
-    // }
-
-    
-
-    // _reset(time) {
-    //     if(this._currentSource) {
-    //         this._currentSource.stop();
-    //         this._currentSource = null;
-    //     }
-    //     if(this._nextSource) {
-    //         this._nextSource.stop();
-    //         this._nextSource = null;
-    //     }
-    //     this._current = null;
-    // }
-
-    // _add(startTime, buffer) {
-    //     if(!buffer) {
-    //         throw new Error('EightIAudio failed to decode audio');
-    //     }
-    //     if(!this._find(startTime)) {
-    //         this._buffers.push(
-    //             {
-    //                 s: startTime, 
-    //                 e: startTime + buffer.duration,
-    //                 b: buffer
-    //             }
-    //         );
-    //     }
-    // }
-
   
-
     ENVSummary = JSON.stringify(EightI.Env)
 
     if(wasmSupported) {
@@ -177,7 +111,6 @@ const onxrloaded = () => {
       theRenderer.context.getExtension('WEBGL_debug_renderer_info')  
       theCamera = camera
       clock = new THREE.Clock()
-      initAudio()
       // Add some objects to the scene and set the starting camera position.
       initXrScene({scene, camera})
       
@@ -201,7 +134,6 @@ const onxrloaded = () => {
       //Guessing this moves everything around appropriately
       theCamera.updateMatrixWorld();
       theCamera.matrixWorldInverse.getInverse(theCamera.matrixWorld);
-      //Test to see if this would stop everything from freezing
       theRenderer.clear(true,true,true)
     },
     onRender: () =>{
@@ -209,41 +141,15 @@ const onxrloaded = () => {
       var t = clock.getElapsedTime()
 
       if (thePlayer && theActor && theActor.asset){
-        // if(!playing){
-        //   initAudio()
-        //   playing = true
-        // }
-        
-        // Allow EightI library to update.
         //What does this do?
         EightI.Env.update();
         // Update asset.
         assetState = theAsset.getState(); 
-
-        // HACK : currently buffer is hard coded to 2 seconds and caching state is not being set
-        // so add temp check here, should be using assetState.isCaching()
-        const duration = this._actorElement._asset.getDuration();
-        let bufferFillRatio = this._actorElement._asset.getBufferFillRatio();
-        let isCaching = bufferFillRatio < 0.25 && duration > 2.0;
-        // END HACK
       
         if(!assetState.isInitialising() && !assetState.isPlaying()) {
             theAsset.play()
-            playAudio()
         }
-        theAsset.update(t);//This line causes problems
-        if(!muted) {
-          if(assetState.isPlaying() && !isCaching) {
-              // if(this._actorElement._audio) {
-                  
-                  playAudio(currentTime, duration);
-          //     }
-          // } else {
-          //     if(this._actorElement._audio) {
-          //         this._actorElement._audio.pause();
-          //     }
-          // }
-        }
+        theAsset.update(t);
 
         // Update viewport
         theViewport.setDimensions(0, 0, viewportWidth * window.devicePixelRatio, viewportHeight * window.devicePixelRatio);
@@ -310,98 +216,6 @@ function onEightiInitialise(){
   theActor.setTransform(transform);
    console.log("EIGHTI is INITIALISED");
    console.log("EightI Env after init: ", JSON.stringify(EightI.Env));
-}
-
-function initAudio() {
-  console.log("/InitAudio")
-  if(muted) {
-      return;
-  }
-  // play nothing so we have usable audio content
-  let fakeBuffer = audioContext.createBuffer(1, 1, 44100);
-  let source = audioContext.createBufferSource();
-  source.buffer = fakeBuffer;
-  source.connect(audioGainNode);
-  source.start();
-}
-
-function add(startTime, input) {
-  console.log('/add startTime, input', startTime, input)
-  if(!input) {
-      throw new Error('Audio source must be valid');
-  } else if (input instanceof ArrayBuffer) {
-      audioContext.decodeAudioData(input, function(audioBuffer) {
-          this._add(startTime, audioBuffer);
-      }.bind(this))
-  } else if(typeof input === 'string' || input instanceof String) {
-      fetch(input)
-      .then(response => response.arrayBuffer())
-      .then(dataBuffer => {
-          audioContext.decodeAudioData(dataBuffer, function(audioBuffer) {
-              this._add(startTime, audioBuffer);
-          }.bind(this))
-      });
-  }
-}
-
-function playAudio(currentTime, duration) {
-  console.log("/playAudio")
-  if(!playing || (playing && lastTime > currentTime)) {
-      playing = true;
-      // reset(currentTime);
-      // update(currentTime, duration);
-  }
-  lastTime = currentTime;
-}
-
-function findAudio(time) {
-    var next = -1;
-    for (var idx in this._buffers) {
-        if(time >= this._buffers[idx].s && time < this._buffers[idx].e) {
-            return this._buffers[idx];
-        } else if(time < this._buffers[idx].s && (next == -1 || this._buffers[idx].s < this._buffers[next].s)) {
-            next = idx;
-        }
-    }
-    if(next != -1)
-        return this._buffers[next];
-    return null;
-}
-
-function updateAudio(currentTime, duration) {
-  if(!playing) {
-      return;
-  }
-  let data = findAudio(currentTime);
-  if(data && data != this._current) {
-      this._current = data;
-      this._currentSource = this._nextSource;
-
-      let source = this._source = this._context.createBufferSource();
-      source.buffer = this._current.b;
-      source.connect(this._destinationNode);
-      let startTime = this._context.currentTime;
-      let offset = 0.0;
-      let difference = currentTime - this._current.s;
-      if(difference < 0.0) {
-          startTime += difference;
-          if(startTime < 0) {
-              startTime = 0.0;
-          }
-      } else {
-          offset = difference;
-      }
-      source.start(startTime, offset);
-      // TODO: queue up next audio source to avoid popping
-      //source.start(0);
-      //if(!this._currentSource)
-          this._currentSource = source;
-      //else {
-      //    this._nextSouce = source;
-      //}
-      return true;
-  } 
-  return false;
 }
 
 window.onload = () => {window.XR ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)}
